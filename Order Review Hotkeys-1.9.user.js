@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name            Order Review Hotkeys
 // @namespace       http://tampermonkey.net/
-// @version         1.9
-// @description     Tab navigation, 'A' for Approve, 'D' for Deny (0), and 'M' for MOQ (Focus Transfer Method).
+// @version         1.12
+// @description     Tab navigation (Strict Top Alignment), 'A' for Approve, 'D' for Deny (0), and 'M' for MOQ.
 // @author          Justin Lin
 // @match           https://admin.hourloop.com/*
 // @require         https://code.jquery.com/jquery-3.6.0.min.js
@@ -10,6 +10,13 @@
 
 (function () {
     'use strict';
+
+    // ==========================================
+    // ⚙️ [設定區] 頂部偏移量
+    // 如果你們網頁最上方有「固定不動的導覽列」會擋住卡片，可以把 0 改成導覽列的高度 (例如 60 或 80)
+    // 如果沒有，維持 0 就是最完美的「螢幕頂端 = 卡片頂端」
+    // ==========================================
+    const TOP_OFFSET = 60;
 
     let activeContainer = null;
     let isKeyboardNavigating = false;
@@ -38,20 +45,17 @@
 
     // --- 核心共用功能：精準填值與焦點轉移 ---
     function fillQuantityAndTransferFocus(targetValue) {
-        // 1. 點擊 Deny 展開欄位
         const $denyBtn = activeContainer.find('span.fa-remove[title="Deny"]');
         if ($denyBtn.length > 0) {
             $denyBtn[0].click();
         }
 
-        // 2. 等待欄位展開後填值
         setTimeout(() => {
             const $input = activeContainer.find('input[name="order_review_item[suggested_qty]"]').first();
 
             if ($input.length) {
                 const el = $input[0];
 
-                // 強制破解框架寫入數值
                 el.focus();
                 const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                 if (nativeSetter) {
@@ -60,11 +64,9 @@
                     el.value = targetValue;
                 }
 
-                // 發送打字事件
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
 
-                // 3. 延遲 100ms 後，尋找並模擬點擊 Trix 留言框
                 setTimeout(() => {
                     let $editor = activeContainer.nextAll().find('trix-editor').first();
                     if ($editor.length === 0) {
@@ -74,19 +76,12 @@
 
                     if ($editor.length > 0) {
                         const editorEl = $editor[0];
-
-                        // 讓輸入框失去焦點
                         el.blur();
-
-                        // 模擬滑鼠在 Trix 編輯器上的完整點擊動作
                         editorEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
                         editorEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
                         editorEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-
-                        // 讓游標直接停在留言框裡
                         editorEl.focus();
                     } else {
-                        // 備案：如果找不到留言框，就點擊網頁空白處
                         el.blur();
                         document.body.click();
                     }
@@ -125,8 +120,14 @@
             clearTimeout(keyboardNavTimeout);
             keyboardNavTimeout = setTimeout(() => { isKeyboardNavigating = false; }, 600);
 
-            activeContainer[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // 【核心更新】絕對貼齊頂部滾動 (Strict Top Alignment)
+            const elementTop = activeContainer[0].getBoundingClientRect().top + window.scrollY;
+            window.scrollTo({
+                top: elementTop - TOP_OFFSET,
+                behavior: 'smooth'
+            });
 
+            // 視覺回饋：稍微閃爍一下背景色
             const $target = activeContainer;
             const originalBg = $target.css('background-color');
 
@@ -170,18 +171,12 @@
             e.preventDefault();
             e.stopPropagation();
 
-            // 尋找 MOQ 的 span 標籤
             const $moqSpan = activeContainer.find('span[title="Minimum order quantity"]');
             let targetMoq = "0";
 
             if ($moqSpan.length > 0) {
-                // 用 Regex 提取裡面的數字 (例如從 "MOQ: 6" 中提取 "6")
                 const match = $moqSpan.text().match(/\d+/);
-                if (match) {
-                    targetMoq = match[0];
-                }
-            } else {
-                console.warn("找不到 MOQ 數值，將預設帶入 0");
+                if (match) targetMoq = match[0];
             }
 
             fillQuantityAndTransferFocus(targetMoq);
